@@ -1,0 +1,13 @@
+setuptools
+modelscope
+transformers
+streamlit
+sentencepiece
+transformers_stream_generator
+peft
+openai
+tqdm
+transformers
+vllm
+nest-asyncio
+accelerate

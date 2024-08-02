@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -14,6 +15,7 @@ from loguru import logger
 from openai import OpenAI
 from tqdm import tqdm
 
+sys.path.append(Path(__file__).parents[1].as_posix())
 from data.prompts.single_infer import single_prompt
 
 load_dotenv()
@@ -121,7 +123,7 @@ def send_a_group_req(gen_kwargs):
 
 def process_datas(datas):
     results = []
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=args.threads) as executor:
         future_data = {}
         lens = 0
         for data in tqdm(datas, desc="Submitting tasks", total=len(datas)):
@@ -168,6 +170,8 @@ def main():
     if os.path.exists(args.output_path):
         return [json.loads(i) for i in open(args.output_path, "r")]
     datas = [json.loads(i) for i in jsonlines.open(args.data_path, "r")]
+    if args.samples > 0:
+        datas = datas[: args.samples]
     return_list = process_datas(datas)
     print(f"All tasks: {len(return_list)} finished!")
     return return_list
@@ -248,7 +252,6 @@ def parse_args():
         "--base-url",
         type=str,
         default=os.getenv("OPENAI_BASE_URL"),
-        required=True,
         help="Openai like api base",
     )
     parser.add_argument(
@@ -258,7 +261,7 @@ def parse_args():
         help="Openai like api key",
     )
     parser.add_argument(
-        "--data-path-to-predict",
+        "--data-path",
         type=Union[str, Path],
         default=Path(__file__).parents[1].joinpath("data", "round1_train_data.json"),
         help="Data to predict file path.",
@@ -269,7 +272,18 @@ def parse_args():
         default=Path(__file__).parents[1].joinpath("output", "upload.json"),
         help="File to upload path.",
     )
-    return parser.parse_args()
+    parser.add_argument("--threads", type=int, default=16, help="Threads to use.")
+    parser.add_argument("--samples", type=int, default=-1, help="Samples to use.")
+    args = parser.parse_args()
+    if not isinstance(args.output_path, Path):
+        args.output_path = Path(args.output_path)
+    curr_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    args.output_path = args.output_path.parent.joinpath(
+        f"{args.task}_{args.output_path.stem}_{args.model}_{curr_time}.{args.output.suffix}"
+    )
+    if not isinstance(args.data_path, Path):
+        args.data_path = Path(args.data_path)
+    return
 
 
 if __name__ == "__main__":
@@ -292,10 +306,7 @@ if __name__ == "__main__":
                 sorted_data.append(sample)
     sorted_data = sorted(sorted_data, key=lambda x: int(str(x["id"])[-3:]))
 
-    with open("upload.jsonl", "w") as writer:
-        for sample in sorted_data:
-            writer.write(json.dumps(sample, ensure_ascii=False))
-            writer.write("\n")
+    jsonlines.open(args.output_path, "w").write(sorted_data)
 
     if args.task == "train":
         evaluate(sorted_data)

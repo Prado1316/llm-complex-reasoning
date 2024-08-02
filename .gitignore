@@ -2,3 +2,4 @@ logs
 output
 __MACOSX
 .DS_Store
+.env

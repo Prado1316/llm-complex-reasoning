@@ -1,12 +1,22 @@
+import argparse
 import json
 import os
+import random
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Dict, List, Union
 
+import jsonlines
+from dotenv import load_dotenv
 from loguru import logger
 from openai import OpenAI
 from tqdm import tqdm
+
+from data.prompts.single_infer import single_prompt
+
+load_dotenv()
 
 logger.remove()  # 移除默认的控制台输出
 logger.add(
@@ -17,68 +27,63 @@ logger.add(
     compression="zip",
 )
 
-MODEL_NAME = "Qwen2-7B-Instruct-lora"
 
-
-def call_openai_like_api(MODEL_NAME, query):
-    # 这里采用dashscope的api调用模型推理，通过http传输的json封装返回结果
-
+def call_openai_like_api(messages: List[Dict], **kwargs):
     client = OpenAI(
-        base_url="http://localhost:8000/v1",
-        api_key="sk-xxx",  # 随便填写，只是为了通过接口参数校验
+        base_url=args.base_url,
+        api_key=args.api_key,
     )
     completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            # {'role':'system','content':'你是一个解决推理任务的专家，你需要分析出问题中的每个实体以及响应关系。然后根据问题一步步推理出结果。并且给出正确的结论。'},
-            {"role": "user", "content": query}
-        ],
+        model=args.model, messages=messages, **kwargs
     )
     return completion.choices[0].message.content
 
 
-def api_retry(MODEL_NAME, query):
+def api_retry(**gen_kwargs):
     max_retries = 5
-    retry_delay = 60  # in seconds
+    retry_delay = 60
     attempts = 0
     while attempts < max_retries:
         try:
-            return call_openai_like_api(MODEL_NAME, query)
+            return call_openai_like_api(**gen_kwargs)
         except Exception as e:
             attempts += 1
             if attempts < max_retries:
                 logger.warning(
-                    f"Attempt {attempts} failed for text: {query}. Retrying in {retry_delay} seconds..."
+                    f"Attempt {attempts} failed for args: {gen_kwargs}. Retrying in {retry_delay} seconds..."
                 )
                 time.sleep(retry_delay)
             else:
                 logger.error(
-                    f"All {max_retries} attempts failed for text: {query}. Error: {e}"
+                    f"All {max_retries} attempts failed for args: {gen_kwargs}. Error: {e}"
                 )
                 raise
 
 
-# 这里定义了prompt推理模版
+def compose_messages(
+    system: str = "You are a helpful assistant.", prompt: str = ""
+) -> List[Dict]:
+    return [
+        {
+            "role": "system",
+            "content": system,
+        },
+        {"role": "user", "content": prompt},
+    ]
 
 
-def get_prompt(problem, question, options):
-
+def prepare_gen_kwargs(problem, question, options) -> Dict:
     options = "\n".join(f"{'ABCDEFG'[i]}. {o}" for i, o in enumerate(options))
-
-    prompt = f"""你是一个逻辑推理专家，擅长解决逻辑推理问题。以下是一个逻辑推理的题目，形式为单项选择题。所有的问题都是（close-world assumption）闭世界假设，即未观测事实都为假。请逐步分析问题并在最后一行输出答案，最后一行的格式为"答案是：A"。题目如下：
-
-### 题目:
-{problem}
-
-### 问题:
-{question}
-{options}
-"""
-    # print(prompt)
-    return prompt
-
-
-# 这里使用extract抽取模获得抽取的结果
+    prompt = single_prompt.format(problem=problem, question=question, options=options)
+    messages = compose_messages(prompt=prompt)
+    return {
+        "model": args.model,
+        "messages": messages,
+        "repetition_penalty": 1.05,
+        "temperature": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
+    }
 
 
 def extract(input_text):
@@ -86,9 +91,8 @@ def extract(input_text):
 
     ans_pattern = re.compile(r"答案是：(.)", re.S)
     problems = ans_pattern.findall(input_text)
-    # print(problems)
-    if problems == []:
-        return "A"
+    if not problems:
+        return random.choice(["A", "B", "c", "D"])
     return problems[0]
 
 
@@ -106,29 +110,29 @@ def most_frequent_char(ext_rep):
     return most_frequent
 
 
-def send_a_group_req(prompt):
+def send_a_group_req(gen_kwargs):
     res, res1, res2 = (
-        api_retry(MODEL_NAME, prompt),
-        api_retry(MODEL_NAME, prompt),
-        api_retry(MODEL_NAME, prompt),
+        api_retry(**gen_kwargs),
+        api_retry(**gen_kwargs),
+        api_retry(**gen_kwargs),
     )
     return res, res1, res2
 
 
 def process_datas(datas):
     results = []
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         future_data = {}
         lens = 0
         for data in tqdm(datas, desc="Submitting tasks", total=len(datas)):
             problem = data["problem"]
             for id, question in enumerate(data["questions"]):
-                prompt = get_prompt(
+                gen_kwargs = prepare_gen_kwargs(
                     problem,
                     question["question"],
                     question["options"],
                 )
-                future = executor.submit(send_a_group_req, prompt)
+                future = executor.submit(send_a_group_req, gen_kwargs)
                 future_data[future] = (data, id)
                 lens += 1
         for future in tqdm(
@@ -147,40 +151,37 @@ def process_datas(datas):
     return results
 
 
-def main(ifn, ofn):
-    if os.path.exists(ofn):
-        pass
-    data = []
-    # 按行读取数据
-    with open(ifn) as reader:
-        for line in reader:
-            sample = json.loads(line)
-            data.append(sample)
-    datas = data
-    # print(data)
-    # 均匀地分成多个数据集
+def get_api_info():
+    client = OpenAI(
+        base_url=args.base_url,
+        api_key=args.api_key,
+    )
+    models = client.models.list()
+    if args.model not in models:
+        logger.error(f"{args.model} is not in {models}")
+        exit(1)
+    else:
+        logger.info(f"Current api support model: {models}")
+
+
+def main():
+    if os.path.exists(args.output_path):
+        return [json.loads(i) for i in open(args.output_path, "r")]
+    datas = [json.loads(i) for i in jsonlines.open(args.data_path, "r")]
     return_list = process_datas(datas)
-    print(len(return_list))
-    print("All tasks finished!")
+    print(f"All tasks: {len(return_list)} finished!")
     return return_list
 
 
-def evaluate(ofn):
-    data = []
-    with open(ofn) as reader:
-        for line in reader:
-            sample = json.loads(line)
-            data.append(sample)
-
+def evaluate(data):
     pse = 0
     cnt = 0
     tot = 0
     for task in data:
         for question in task["questions"]:
-
-            if MODEL_NAME in question:
+            if args.model in question:
                 tot += 1
-                cnt += question[MODEL_NAME] == question["answer"]
+                cnt += question[args.model] == question["answer"]
             else:
                 pse += 1
 
@@ -233,20 +234,56 @@ def find_missing_ids(dict_list):
     return sorted(missing_ids)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="train",
+        choices=["train", "test"],
+        help="Run task type, train: predict+evaluate, test: predict only",
+    )
+    parser.add_argument("--model", type=str, required=True, default="Qwen2-7b-Instruct")
+    parser.add_argument(
+        "--base-url",
+        type=str,
+        default=os.getenv("OPENAI_BASE_URL"),
+        required=True,
+        help="Openai like api base",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=os.getenv("OPENAI_API_KEY", "EMPTY"),
+        help="Openai like api key",
+    )
+    parser.add_argument(
+        "--data-path-to-predict",
+        type=Union[str, Path],
+        default=Path(__file__).parents[1].joinpath("data", "round1_train_data.json"),
+        help="Data to predict file path.",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=Union[str, Path],
+        default=Path(__file__).parents[1].joinpath("output", "upload.json"),
+        help="File to upload path.",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    return_list = main("data/round1_test_data.jsonl", "upload.jsonl")
+    args = parse_args()
+    return_list = main()
     return_list = filter_problems(return_list)
     sorted_data = sorted(return_list, key=lambda x: int(str(x["id"])[-3:]))
-    print(sorted_data)
-    # 示例字典列表
+
     dict_list = sorted_data
 
-    # 找出缺失的序号
     missing_ids = find_missing_ids(dict_list)
     print("缺失的序号:", missing_ids)
 
-    data = []
-    with open("data/round1_test_data.jsonl") as reader:
+    with open(args.data_path) as reader:
         for id, line in enumerate(reader):
             if id in missing_ids:
                 sample = json.loads(line)
@@ -260,4 +297,5 @@ if __name__ == "__main__":
             writer.write(json.dumps(sample, ensure_ascii=False))
             writer.write("\n")
 
-    evaluate(sorted_data)
+    if args.task == "train":
+        evaluate(sorted_data)

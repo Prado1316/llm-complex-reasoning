@@ -11,3 +11,4 @@ transformers
 vllm
 nest-asyncio
 accelerate
+jsonlines

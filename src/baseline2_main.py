@@ -283,7 +283,7 @@ def parse_args():
     parser.add_argument(
         "--output-path",
         type=str,
-        default=Path(__file__).parents[1].joinpath("output", "upload.json"),
+        default=Path(__file__).parents[1].joinpath("output", "upload.jsonl"),
         help="File to upload path.",
     )
     parser.add_argument("--threads", type=int, default=16, help="Threads to use.")
@@ -323,12 +323,7 @@ if __name__ == "__main__":
                 sorted_data.append(sample)
     sorted_data = sorted(sorted_data, key=lambda x: int(str(x["id"])[-3:]))
 
-    json.dump(
-        sorted_data,
-        open(args.output_path, "w", encoding="utf-8"),
-        ensure_ascii=False,
-        indent=4,
-    )
+    jsonlines.open(args.output_path, "w").write_all(sorted_data)
 
     if args.task == "train":
         _evaluate(sorted_data)

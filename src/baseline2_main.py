@@ -44,6 +44,8 @@ def api_retry(**gen_kwargs):
     attempts = 0
     while attempts < max_retries:
         try:
+            # 避免同时密集并发造成的网关压力
+            time.sleep(random.uniform(0, retry_delay / 2))
             return call_openai_like_api(**gen_kwargs)
         except Exception as e:
             attempts += 1

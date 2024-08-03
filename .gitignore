@@ -5,3 +5,4 @@ __MACOSX
 .env
 .vscode
 *.pyc
+__pycache__

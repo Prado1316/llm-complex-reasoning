@@ -7,7 +7,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Dict, List
 
 import jsonlines
 from dotenv import load_dotenv
@@ -99,7 +99,7 @@ def _extract_votes_answer(input_texts: List[str]) -> str:
     choices = []
     for text in input_texts:
         problems = ans_pattern.findall(text)
-        if not problems or problems not in ["A", "B", "C", "D", "E"]:
+        if not problems or problems[0] not in ["A", "B", "C", "D", "E"]:
             choices.append(random.choice(["A", "B", "C", "D"]))
         else:
             choices.append(problems[0])

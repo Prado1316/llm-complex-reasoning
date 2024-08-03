@@ -13,6 +13,7 @@ import jsonlines
 from dotenv import load_dotenv
 from loguru import logger
 from openai import OpenAI
+from requests import Session
 from tqdm import tqdm
 
 sys.path.append(Path(__file__).parents[1].as_posix())
@@ -20,7 +21,6 @@ from data.prompts.single_infer import single_prompt
 
 load_dotenv()
 
-logger.remove()  # 移除默认的控制台输出
 logger.add(
     "logs/app_{time:YYYY-MM-DD}.log",
     level="INFO",
@@ -30,20 +30,17 @@ logger.add(
 )
 
 
-def call_openai_like_api(messages: List[Dict], **kwargs):
-    client = OpenAI(
-        base_url=args.base_url,
-        api_key=args.api_key,
-    )
-    completion = client.chat.completions.create(
-        model=args.model, messages=messages, **kwargs
-    )
-    return completion.choices[0].message.content
+def call_openai_like_api(**kwargs):
+    headers = {"Content-Type": "application/json", "Authorization": args.api_key}
+    with Session() as session:
+        url = args.base_url + "/chat/completions"
+        resp = session.post(url, headers=headers, json=kwargs).json()
+    return resp["choices"][0]["message"]["content"]
 
 
 def api_retry(**gen_kwargs):
     max_retries = 5
-    retry_delay = 60
+    retry_delay = 5
     attempts = 0
     while attempts < max_retries:
         try:
@@ -51,6 +48,7 @@ def api_retry(**gen_kwargs):
         except Exception as e:
             attempts += 1
             if attempts < max_retries:
+                logger.error(f"Error: {repr(e)}")
                 logger.warning(
                     f"Attempt {attempts} failed for args: {gen_kwargs}. Retrying in {retry_delay} seconds..."
                 )
@@ -88,37 +86,30 @@ def prepare_gen_kwargs(problem, question, options) -> Dict:
     }
 
 
-def extract(input_text):
-    # ans_pattern = re.compile(r"(.)", re.S)
-
-    ans_pattern = re.compile(r"答案是：(.)", re.S)
-    problems = ans_pattern.findall(input_text)
-    if not problems:
-        return random.choice(["A", "B", "c", "D"])
-    return problems[0]
-
-
-def most_frequent_char(ext_rep):
-    # 创建一个字典来存储每个字符的出现次数
-    frequency = {char: 0 for char in ext_rep}
-
-    # 增加每个字符的出现次数
-    for char in ext_rep:
+def most_frequent_char(choices: List[str]) -> str:
+    frequency = {char: 0 for char in choices}
+    for char in choices:
         frequency[char] += 1
-
-    # 找到出现次数最多的字符
     most_frequent = max(frequency, key=frequency.get)
-
     return most_frequent
 
 
-def send_a_group_req(gen_kwargs):
-    res, res1, res2 = (
-        api_retry(**gen_kwargs),
-        api_retry(**gen_kwargs),
-        api_retry(**gen_kwargs),
-    )
-    return res, res1, res2
+def _extract_votes_answer(input_texts: List[str]) -> str:
+    ans_pattern = re.compile(r"答案是：(.)", re.S)
+    choices = []
+    for text in input_texts:
+        problems = ans_pattern.findall(text)
+        if not problems:
+            choices.append(random.choice(["A", "B", "C", "D"]))
+        else:
+            choices.append(problems[0])
+    ans = most_frequent_char(choices)
+    return ans
+
+
+def send_a_group_req(gen_kwargs, members: int = 5) -> List[str]:
+    resps = [api_retry(**gen_kwargs) for _ in range(members)]
+    return resps
 
 
 def process_datas(datas):
@@ -142,14 +133,11 @@ def process_datas(datas):
         ):
             data, problem_id = future_data[future][0], future_data[future][1]
             try:
-                res, res1, res2 = future.result()
-                ext_rep = extract(res), extract(res1), extract(res2)
-                ans = most_frequent_char(ext_rep)
-                data["questions"][problem_id]["answer"] = ans
+                resps = future.result()
+                data["questions"][problem_id]["answer"] = _extract_votes_answer(resps)
                 results.append(data)
             except Exception as e:
                 logger.error(f"Failed to process text: {data}. Error: {e}")
-
     return results
 
 
@@ -158,7 +146,7 @@ def get_api_info():
         base_url=args.base_url,
         api_key=args.api_key,
     )
-    models = client.models.list()
+    models = [model_card.id for model_card in client.models.list().data]
     if args.model not in models:
         logger.error(f"{args.model} is not in {models}")
         exit(1)
@@ -169,9 +157,10 @@ def get_api_info():
 def main():
     if os.path.exists(args.output_path):
         return [json.loads(i) for i in open(args.output_path, "r")]
-    datas = [json.loads(i) for i in jsonlines.open(args.data_path, "r")]
+    datas = [i for i in jsonlines.open(args.data_path, "r")]
     if args.samples > 0:
         datas = datas[: args.samples]
+    get_api_info()
     return_list = process_datas(datas)
     print(f"All tasks: {len(return_list)} finished!")
     return return_list
@@ -263,7 +252,7 @@ def parse_args():
     parser.add_argument(
         "--data-path",
         type=Union[str, Path],
-        default=Path(__file__).parents[1].joinpath("data", "round1_train_data.json"),
+        default=Path(__file__).parents[1].joinpath("data", "round1_train_data.jsonl"),
         help="Data to predict file path.",
     )
     parser.add_argument(
@@ -279,11 +268,12 @@ def parse_args():
         args.output_path = Path(args.output_path)
     curr_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     args.output_path = args.output_path.parent.joinpath(
-        f"{args.task}_{args.output_path.stem}_{args.model}_{curr_time}.{args.output.suffix}"
+        f"{args.task}_{args.output_path.stem}_{args.model}_{curr_time}{args.output_path.suffix}"
     )
+    logger.info(f"Output path redirected to: {args.output_path.as_posix()}")
     if not isinstance(args.data_path, Path):
         args.data_path = Path(args.data_path)
-    return
+    return args
 
 
 if __name__ == "__main__":

@@ -99,7 +99,7 @@ def _extract_votes_answer(input_texts: List[str]) -> str:
     choices = []
     for text in input_texts:
         problems = ans_pattern.findall(text)
-        if not problems:
+        if not problems or problems not in ["A", "B", "C", "D", "E"]:
             choices.append(random.choice(["A", "B", "C", "D"]))
         else:
             choices.append(problems[0])
@@ -134,7 +134,14 @@ def process_datas(datas):
             data, problem_id = future_data[future][0], future_data[future][1]
             try:
                 resps = future.result()
-                data["questions"][problem_id]["answer"] = _extract_votes_answer(resps)
+                if args.task == "train":
+                    data["questions"][problem_id][args.model] = _extract_votes_answer(
+                        resps
+                    )
+                else:
+                    data["questions"][problem_id]["answer"] = _extract_votes_answer(
+                        resps
+                    )
                 results.append(data)
             except Exception as e:
                 logger.error(f"Failed to process text: {data}. Error: {e}")
@@ -155,6 +162,7 @@ def get_api_info():
 
 
 def main():
+    logger.info(f"Run task {args.task}")
     if os.path.exists(args.output_path):
         return [json.loads(i) for i in open(args.output_path, "r")]
     datas = [i for i in jsonlines.open(args.data_path, "r")]
@@ -166,7 +174,7 @@ def main():
     return return_list
 
 
-def evaluate(data):
+def _evaluate(data):
     pse = 0
     cnt = 0
     tot = 0
@@ -178,7 +186,9 @@ def evaluate(data):
             else:
                 pse += 1
 
-    print(cnt, tot, cnt / tot, pse)
+    logger.info(
+        f"统计结果:\n答对 {cnt}\n总答题 {tot}\n答题正确率 {cnt / tot}\n未答题 {pse}"
+    )
 
 
 def has_complete_answer(questions):
@@ -251,13 +261,13 @@ def parse_args():
     )
     parser.add_argument(
         "--data-path",
-        type=Union[str, Path],
+        type=str,
         default=Path(__file__).parents[1].joinpath("data", "round1_train_data.jsonl"),
         help="Data to predict file path.",
     )
     parser.add_argument(
         "--output-path",
-        type=Union[str, Path],
+        type=str,
         default=Path(__file__).parents[1].joinpath("output", "upload.json"),
         help="File to upload path.",
     )
@@ -296,7 +306,12 @@ if __name__ == "__main__":
                 sorted_data.append(sample)
     sorted_data = sorted(sorted_data, key=lambda x: int(str(x["id"])[-3:]))
 
-    jsonlines.open(args.output_path, "w").write(sorted_data)
+    json.dump(
+        sorted_data,
+        open(args.output_path, "w", encoding="utf-8"),
+        ensure_ascii=False,
+        indent=4,
+    )
 
     if args.task == "train":
-        evaluate(sorted_data)
+        _evaluate(sorted_data)

@@ -1,3 +1,11 @@
+# -*- encoding: utf-8 -*-
+"""
+@Time    :   2024-08-03 23:20:13
+@desc    :   执行api调用模型测试流程
+@Author  :   ticoAg
+@Contact :   1627635056@qq.com
+"""
+
 import argparse
 import json
 import os
@@ -9,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List
 
+import json5
 import jsonlines
 from dotenv import load_dotenv
 from loguru import logger
@@ -32,10 +41,14 @@ logger.add(
 
 def call_openai_like_api(**kwargs):
     headers = {"Content-Type": "application/json", "Authorization": args.api_key}
-    with Session() as session:
-        url = args.base_url + "/chat/completions"
-        resp = session.post(url, headers=headers, json=kwargs).json()
-    return resp["choices"][0]["message"]["content"]
+    try:
+        with Session() as session:
+            url = args.base_url + "/chat/completions"
+            resp = session.post(url, headers=headers, json=kwargs).text
+            resp = json5.loads(resp)
+        return resp["choices"][0]["message"]["content"]
+    except Exception as err:
+        logger.error(err)
 
 
 def api_retry(**gen_kwargs):
@@ -45,7 +58,7 @@ def api_retry(**gen_kwargs):
     while attempts < max_retries:
         try:
             # 避免同时密集并发造成的网关压力
-            time.sleep(random.uniform(0, retry_delay / 2))
+            time.sleep(random.uniform(0, retry_delay))
             return call_openai_like_api(**gen_kwargs)
         except Exception as e:
             attempts += 1

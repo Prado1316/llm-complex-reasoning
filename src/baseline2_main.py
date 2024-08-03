@@ -291,6 +291,8 @@ def parse_args():
     args = parser.parse_args()
     if not isinstance(args.output_path, Path):
         args.output_path = Path(args.output_path)
+    if not args.output_path.parent.exists():
+        args.output_path.parent.mkdir(parents=True)
     curr_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
     args.output_path = args.output_path.parent.joinpath(
         f"{args.task}_{args.output_path.stem}_{args.model}_{curr_time}{args.output_path.suffix}"

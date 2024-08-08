@@ -12,6 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import jsonlines
+from loguru import logger
 
 
 def _filter_test_data(data: Dict) -> Dict:
@@ -36,11 +37,11 @@ def _extract_raw_data():
     return _filter_test_data(_cache_data)
 
 
-def _extract_correct_data(data):
-    """提取正确数据"""
-    ds = []
+def _classify_ds(data):
+    """提取正确和错误的数据"""
+    _ds = []
     _ds_n = []
-    ans_pattern = re.compile(r"答案是：(.)", re.S)
+    ans_pattern = re.compile(r"答案是: (.)", re.S)
     for _id, metadata in data.items():
         for _q_idx, questionItem in enumerate(metadata["questions"]):
             正确选项 = questionItem["answer"]
@@ -48,26 +49,37 @@ def _extract_correct_data(data):
                 splited_msg = answerItem["args"]["messages"][1]["content"].split(
                     "### 题目:\n"
                 )
-                system = splited_msg[0].replace("`答案是：A`\n\n", "答案是：")
-                query = splited_msg[1] + "### 答案:\n"
-                reply = answerItem["text"]
+                system = splited_msg[0].replace(
+                    "`答案是：A`\n\n", "`答案是: (你认为的正确答案)`"
+                )
+                query = splited_msg[1]
+                reply = (
+                    answerItem["text"]
+                    .replace("答案是 ", "答案是: ")
+                    .replace("答案是：", "答案是: ")
+                )
+                choices = ans_pattern.findall(reply)[-1]
+                reply_splited = reply.split("\n")[:-1] + [f"答案是: {choices}"]
+                reply = "\n".join(reply_splited)
                 messages = [
                     {"role": "system", "content": system},
                     {"role": "user", "content": query},
                     {"role": "assistant", "content": reply},
                 ]
-                choices = ans_pattern.findall(reply)[-1]
                 ds_id = f"{_id}-{_q_idx}-{_a_idx}"
                 if choices == 正确选项:
-                    ds.append({"id": ds_id, "messages": messages})
+                    _ds.append({"id": ds_id, "messages": messages})
                 else:
-                    print(f"正确选项: {正确选项}\n错误选项推理过程:{reply}")
+                    logger.info(f"正确选项: {正确选项}\n错误选项推理过程:{reply[:300]}")
                     _ds_n.append({"id": ds_id, "messages": messages})
-    ...
+    logger.success(f"正确选项数量: {len(_ds)}, 错误选项数量: {len(_ds_n)}")
+    return _ds, _ds_n
 
 
 if __name__ == "__main__":
     _model_id = "_Qwen2-72B-Instruct-test"
     cache_path = Path(".cache", "req_cache.jsonl")
     data = _extract_raw_data()
-    data = _extract_correct_data(data)
+    _ds, _ds_n = _classify_ds(data)
+    jsonlines.open(Path(".cache", "train.jsonl"), "w").write_all(_ds)
+    jsonlines.open(Path(".cache", "no_train.jsonl"), "w").write_all(_ds_n)

@@ -1,3 +1,14 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:7ab372e396123ebc1a225d13fcec3fea5c4a1a678fdd4285a51b38978dbeab6a
-size 164
+jsonlines
+json5
+modelscope
+openai
+sentencepiece
+setuptools
+streamlit
+tqdm
+peft
+accelerate
+transformers
+transformers_stream_generator
+vllm
+loguru

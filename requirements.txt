@@ -1,14 +1,3 @@
-setuptools
-modelscope
-transformers
-streamlit
-sentencepiece
-transformers_stream_generator
-peft
-openai
-tqdm
-transformers
-vllm
-nest-asyncio
-accelerate
-jsonlines
+version https://git-lfs.github.com/spec/v1
+oid sha256:7ab372e396123ebc1a225d13fcec3fea5c4a1a678fdd4285a51b38978dbeab6a
+size 164

@@ -4,5 +4,6 @@ __MACOSX
 .DS_Store
 .env
 .vscode
+.cache
 *.pyc
 __pycache__

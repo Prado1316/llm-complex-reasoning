@@ -13,6 +13,7 @@ import random
 import re
 import sys
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Dict, List
@@ -40,8 +41,14 @@ logger.add(
 
 
 def call_openai_like_api(**kwargs):
-    headers = {"Content-Type": "application/json", "Authorization": args.api_key}
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + args.api_key,
+    }
     try:
+        # client = OpenAI()
+        # resp = client.chat.completions.create(**kwargs)
+        # return resp.choices[0].message.content
         with Session() as session:
             url = args.base_url + "/chat/completions"
             resp = session.post(url, headers=headers, json=kwargs).text
@@ -58,7 +65,7 @@ def api_retry(**gen_kwargs):
     while attempts < max_retries:
         try:
             # 避免同时密集并发造成的网关压力
-            time.sleep(random.uniform(0, retry_delay))
+            # time.sleep(random.uniform(0, retry_delay))
             return call_openai_like_api(**gen_kwargs)
         except Exception as e:
             attempts += 1
@@ -94,10 +101,10 @@ def prepare_gen_kwargs(problem, question, options) -> Dict:
     return {
         "model": args.model,
         "messages": messages,
-        "repetition_penalty": 1.05,
-        "temperature": 0.7,
-        "top_p": 0.8,
-        "top_k": 20,
+        # "repetition_penalty": 1.05,
+        # "temperature": 0.7,
+        # "top_p": 0.8,
+        # "top_k": 20,
     }
 
 
@@ -112,14 +119,17 @@ def most_frequent_char(choices: List[str]) -> str:
 def _extract_votes_answer(input_texts: List[str]) -> str:
     ans_pattern = re.compile(r"答案是：(.)", re.S)
     choices = []
+    true_choices = []
     for text in input_texts:
         problems = ans_pattern.findall(text)
         if not problems or problems[0] not in ["A", "B", "C", "D", "E"]:
             choices.append(random.choice(["A", "B", "C", "D"]))
+            true_choices.append("None")
         else:
             choices.append(problems[0])
+            true_choices.append(problems[0])
     ans = most_frequent_char(choices)
-    return ans
+    return ans, true_choices
 
 
 def send_a_group_req(gen_kwargs, members: int = 5) -> List[str]:
@@ -128,38 +138,73 @@ def send_a_group_req(gen_kwargs, members: int = 5) -> List[str]:
 
 
 def process_datas(datas):
-    results = []
+    results = list(jsonlines.open(args.cache_path, "r"))
+    _model_id = "_" + args.model
     with ThreadPoolExecutor(max_workers=args.threads) as executor:
+        _cache_data = defaultdict()
+        for item in list(jsonlines.open(args.cache_path, "r")):
+            if not _cache_data.get(item["id"]):
+                _cache_data[item["id"]] = item
+            else:
+                for _id, question in enumerate(item["questions"]):
+                    if question.get(_model_id):
+                        _cache_data[item["id"]]["questions"][_id] = question
         future_data = {}
         lens = 0
         for data in tqdm(datas, desc="Submitting tasks", total=len(datas)):
             problem = data["problem"]
             for id, question in enumerate(data["questions"]):
+                # 对于已有数据 跳过
+                if _cache_data.get(data["id"]) and _cache_data[data["id"]].get(
+                    "questions"
+                )[id].get(_model_id):
+                    continue
                 gen_kwargs = prepare_gen_kwargs(
                     problem,
                     question["question"],
                     question["options"],
                 )
                 future = executor.submit(send_a_group_req, gen_kwargs)
-                future_data[future] = (data, id)
+                future_data[future] = (data, id, gen_kwargs)
                 lens += 1
         for future in tqdm(
             as_completed(future_data), total=lens, desc="Processing tasks"
         ):
-            data, problem_id = future_data[future][0], future_data[future][1]
+            data, problem_id, gen_kwargs = (
+                future_data[future][0],
+                future_data[future][1],
+                future_data[future][2],
+            )
+            data["questions"][problem_id][_model_id] = {}
             try:
                 resps = future.result()
+                votes_answer, true_choices = _extract_votes_answer(resps)
                 if args.task == "train":
-                    data["questions"][problem_id][args.model] = _extract_votes_answer(
-                        resps
-                    )
+                    data["questions"][problem_id][args.model] = votes_answer
                 else:
-                    data["questions"][problem_id]["answer"] = _extract_votes_answer(
-                        resps
-                    )
+                    data["questions"][problem_id]["answer"] = votes_answer
+
+                res_items = [
+                    {
+                        "text": resps[i],
+                        "correct": true_choices[i]
+                        == data["questions"][problem_id].get("answer"),
+                        "args": gen_kwargs,
+                    }
+                    for i in range(len(resps))
+                ]
+                data["questions"][problem_id][_model_id]["ans"] = votes_answer
+                data["questions"][problem_id][_model_id]["answers"] = res_items
+
+                with jsonlines.open(args.cache_path, "a") as f:
+                    f.write(data)
                 results.append(data)
             except Exception as e:
                 logger.error(f"Failed to process text: {data}. Error: {e}")
+    for data in results:
+        for question in data["questions"]:
+            if question.get(_model_id):
+                del question[_model_id]
     return results
 
 
@@ -289,17 +334,30 @@ def parse_args():
     parser.add_argument("--threads", type=int, default=16, help="Threads to use.")
     parser.add_argument("--samples", type=int, default=-1, help="Samples to use.")
     args = parser.parse_args()
+    os.environ["OPENAI_BASE_URL"] = args.base_url
+    os.environ["OPENAI_API_KEY"] = args.api_key
     if not isinstance(args.output_path, Path):
         args.output_path = Path(args.output_path)
     if not args.output_path.parent.exists():
         args.output_path.parent.mkdir(parents=True)
     curr_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+
+    model_str_path = args.model.replace("/", "_")
     args.output_path = args.output_path.parent.joinpath(
-        f"{args.task}_{args.output_path.stem}_{args.model}_{curr_time}{args.output_path.suffix}"
+        f"{args.task}_{args.output_path.stem}_{model_str_path}_{curr_time}{args.output_path.suffix}"
     )
     logger.info(f"Output path redirected to: {args.output_path.as_posix()}")
     if not isinstance(args.data_path, Path):
         args.data_path = Path(args.data_path)
+    args.cache_path = (
+        Path(__file__)
+        .parents[1]
+        .joinpath(".cache", f"req_cache_{args.model}_{args.task}.jsonl")
+    )
+    if not args.cache_path.parent.exists():
+        args.cache_path.parent.mkdir(parents=True)
+    if not args.cache_path.exists():
+        args.cache_path.touch()
     return args
 
 
@@ -314,7 +372,7 @@ if __name__ == "__main__":
     missing_ids = find_missing_ids(dict_list)
     print("缺失的序号:", missing_ids)
 
-    with open(args.data_path) as reader:
+    with open(args.data_path, encoding="utf-8") as reader:
         for id, line in enumerate(reader):
             if id in missing_ids:
                 sample = json.loads(line)

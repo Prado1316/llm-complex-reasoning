@@ -1,48 +1,94 @@
+import argparse
+
 import torch
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-mode_path = "./qwen/Qwen2-7B-Instruct/"
-lora_path = "./output/Qwen2_instruct_lora_an/checkpoint-100"  # 这里改称你的 lora 输出对应 checkpoint 地址
 
-# 加载tokenizer
-tokenizer = AutoTokenizer.from_pretrained(mode_path, trust_remote_code=True)
-
-# 加载模型
-model = AutoModelForCausalLM.from_pretrained(
-    mode_path, device_map="auto", torch_dtype=torch.float16, trust_remote_code=True
-).eval()
-
-# 加载lora权重
-model = PeftModel.from_pretrained(model, model_id=lora_path)
-
-prompt = """你是一个逻辑推理专家，擅长解决逻辑推理问题。以下是一个逻辑推理的题目，形式为单项选择题。所有的问题都是（close-world assumption）闭世界假设，即未观测事实都为假。请逐步分析问题并在最后一行输出答案，最后一行的格式为"答案是：A"。题目如下：\n\n### 题目:\n假设您需要构建一个二叉搜索树，其中每个节点或者是一个空的节点（称为"空节点"），或者是一个包含一个整数值和两个子树的节点（称为"数值节点"）。以下是构建这棵树的规则：\n\n1. 树中不存在重复的元素。\n2. 对于每个数值节点，其左子树的所有值都小于该节点的值，其右子树的所有值都大于该节点的值。\n3. 插入一个新值到一个"空节点"时，该"空节点"会被一个包含新值的新的数值节点取代。\n4. 插入一个已存在的数值将不会改变树。\n\n请基于以上规则，回答以下选择题：\n\n### 问题:\n选择题 1：\n给定一个空的二叉搜索树，插入下列数字: [5, 9, 2, 10, 11, 3]，下面哪个选项正确描述了结果树的结构？\nA. tree(5, tree(2, tree(3, nil, nil), nil), tree(9, tree(10, nil, nil), tree(11, nil, nil)))\nB. tree(5, tree(2, nil, tree(3, nil, nil)), tree(9, nil, tree(10, nil, tree(11, nil, nil))))\nC. tree(5, tree(3, tree(2, nil, nil), nil), tree(9, nil, tree(10, tree(11, nil, nil), nil)))\nD. tree(5, nil, tree(2, nil, tree(3, nil, nil)), tree(9, tree(11, nil, nil), tree(10, nil, nil)))"""
-inputs = tokenizer.apply_chat_template(
-    [
-        {"role": "user", "content": "你是一个逻辑推理专家，擅长解决逻辑推理问题。"},
-        {"role": "user", "content": prompt},
-    ],
-    add_generation_prompt=True,
-    tokenize=True,
-    return_tensors="pt",
-    return_dict=True,
-).to("cuda")
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_path", type=str, default="./qwen/Qwen2-7B-Instruct/")
+    parser.add_argument("--lora_path", type=str, required=True)
+    parser.add_argument("--output_path", type=str, default="./merged_model")
+    return parser.parse_args()
 
 
-gen_kwargs = {"max_length": 2500, "do_sample": True, "top_k": 1}
-with torch.no_grad():
-    outputs = model.generate(**inputs, **gen_kwargs)
-    outputs = outputs[:, inputs["input_ids"].shape[1] :]
-    print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+def _setup_all():
+    global tokenizer, model
+    # 加载tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(args.mode_path, trust_remote_code=True)
 
+    # 加载模型
+    model = AutoModelForCausalLM.from_pretrained(
+        args.mode_path,
+        device_map="auto",
+        torch_dtype=torch.float16,
+        trust_remote_code=True,
+    ).eval()
+
+    # 加载lora权重
+    model = PeftModel.from_pretrained(model, model_id=args.lora_path)
+
+
+def _make_infer_example():
+    system_prompt = (
+        "# 角色定义\n"
+        "你是一个逻辑推理专家，擅长解决逻辑推理问题。\n"
+        "# 任务要求\n"
+        "1. 以下是一个逻辑推理的题目，形式为单项选择题\n"
+        "2. 所有的问题都是（close-world assumption）闭世界假设，即未观测事实都为假\n"
+        "3. 所有的定义，认知都来自于题目, 除此之外你不知道任何信息\n"
+        "4. 禁止基于题目外任何信息对推理过程/结果做任何修改\n"
+        "5. 请你根据提供的信息，逐步分析问题并在最后一行输出答案\n"
+        "6. 最后一行的格式为`答案是: (你认为的正确答案)`\n"
+    )
+
+    user_input = (
+        "在一个学术环境中，有多名学生（男生和女生），他们注册在不同的课程中。其中一些课程与学生的注册信息如下所示：\n"
+        "- João、Antônio、Carlos、Luísa、Maria 和 Isabel 是学校的学生。\n"
+        "- 课程包括 LEI，LSIRC 和 LSIG。\n"
+        "- 学生有时会注册某些课程的特定科目。\n"
+        "- João 注册了至少一门课程，而 Antonío、Carlos、Luísa 和 Isabel 没有注册任何课程。\n"
+        "- Maria 注册了科目 FP。\n"
+        "根据以上信息，回答以下选择题：\n"
+        "### 问题:\n"
+        "选择题 1：\n"
+        "哪些学生有注册任何课程？\n"
+        "A. João\n"
+        "B. Antonío\n"
+        "C. Carlos\n"
+        "D. Luísa\n"
+    )
+
+    inputs = tokenizer.apply_chat_template(
+        [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_input},
+        ],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_tensors="pt",
+        return_dict=True,
+    ).to("cuda")
+
+    gen_kwargs = {"max_length": 2500, "do_sample": True, "top_k": 1}
+    with torch.no_grad():
+        outputs = model.generate(**inputs, **gen_kwargs)
+        outputs = outputs[:, inputs["input_ids"].shape[1] :]
+        print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+
+
+args = parse_args()
+
+_setup_all()
+
+_make_infer_example()
 
 # 模型合并存储
-
-new_model_directory = "./merged_model_an"
 merged_model = model.merge_and_unload()
 # 将权重保存为safetensors格式的权重, 且每个权重文件最大不超过2GB(2048MB)
 merged_model.save_pretrained(
-    new_model_directory, max_shard_size="2048MB", safe_serialization=True
+    args.output_path, max_shard_size="2048MB", safe_serialization=True
 )
 
 # !cp ./qwen/Qwen2-7B-Instruct/tokenizer.json ./merged_model_an/

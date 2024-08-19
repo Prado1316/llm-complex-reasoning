@@ -1,5 +1,5 @@
 threads=100
-model=Qwen2-72B-Instruct-test
+model=Qwen2-7B-Instruct-lora
 
 python src/baseline2_main.py \
     --model $model \

@@ -1,5 +1,6 @@
 
-model_dir=/hy-tmp/qwen/merged_model_an
+# model_dir=/hy-tmp/qwen/merged_model_an
+model_dir=output/qwen2-7b-instruct/lora/sft-merged
 served_model_name=Qwen2-7B-Instruct-lora
 
 python -m vllm.entrypoints.openai.api_server \

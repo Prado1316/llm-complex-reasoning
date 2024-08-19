@@ -27,7 +27,7 @@ from requests import Session
 from tqdm import tqdm
 
 sys.path.append(Path(__file__).parents[1].as_posix())
-from data.prompts.single_infer import single_prompt
+from data.prompts.single_infer import single_prompt, system_prompt
 
 load_dotenv()
 
@@ -82,9 +82,7 @@ def api_retry(**gen_kwargs):
                 raise
 
 
-def compose_messages(
-    system: str = "You are a helpful assistant.", prompt: str = ""
-) -> List[Dict]:
+def compose_messages(system: str = system_prompt, prompt: str = "") -> List[Dict]:
     return [
         {
             "role": "system",
@@ -102,8 +100,8 @@ def prepare_gen_kwargs(problem, question, options) -> Dict:
         "model": args.model,
         "messages": messages,
         # "repetition_penalty": 1.05,
-        # "temperature": 0.7,
-        # "top_p": 0.8,
+        "temperature": 0.7,
+        "top_p": 0.8,
         # "top_k": 20,
     }
 

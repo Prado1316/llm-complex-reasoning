@@ -16,11 +16,11 @@ def parse_args():
 def _setup_all():
     global tokenizer, model
     # 加载tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.mode_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
 
     # 加载模型
     model = AutoModelForCausalLM.from_pretrained(
-        args.mode_path,
+        args.model_path,
         device_map="auto",
         torch_dtype=torch.float16,
         trust_remote_code=True,

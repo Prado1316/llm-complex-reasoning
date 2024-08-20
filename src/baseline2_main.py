@@ -115,13 +115,14 @@ def most_frequent_char(choices: List[str]) -> str:
 
 
 def _extract_votes_answer(input_texts: List[str]) -> str:
-    ans_pattern = re.compile(r"答案是：(.)", re.S)
+    ans_pattern = re.compile(r"答案是: (.)", re.S)
     choices = []
     true_choices = []
     for text in input_texts:
         problems = ans_pattern.findall(text)
         if not problems or problems[0] not in ["A", "B", "C", "D", "E"]:
             choices.append(random.choice(["A", "B", "C", "D"]))
+            logger.warning(f"No answer can be extracted: {text}")
             true_choices.append("None")
         else:
             choices.append(problems[0])

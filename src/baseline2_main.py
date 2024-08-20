@@ -122,10 +122,9 @@ def _extract_votes_answer(input_texts: List[str]) -> str:
         problems = ans_pattern.findall(text)
         if not problems or problems[0] not in ["A", "B", "C", "D", "E"]:
             # compatible match pattern
-            ans = re.findall(r'[a-zA-Z]', text)[-1]
+            ans = re.findall(r'[a-zA-Z]', text)
             if ans:
-                ans = ans.upper()
-                choices.append(random.choice(["A", "B", "C", "D"]))
+                ans = ans[-1].upper()
                 true_choices.append(ans)
             else:
                 choices.append(random.choice(["A", "B", "C", "D"]))

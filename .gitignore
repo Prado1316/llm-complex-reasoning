@@ -1,6 +1,7 @@
 logs
 output
 LLaMA-Factory
+submit
 __MACOSX
 .DS_Store
 .env

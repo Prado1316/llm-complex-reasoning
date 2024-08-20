@@ -1,0 +1,41 @@
+# config for https://github.com/hiyouga/LLaMA-Factory
+### model
+model_name_or_path: qwen/Qwen2-7B-Instruct
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_target: all
+
+### dataset
+dataset_dir: data
+dataset: llm-complex-reasoning-train-qwen2-72b-instruct-correct,Infinity-Instruct-0625
+template: qwen
+cutoff_len: 2048
+max_samples: 128000
+overwrite_cache: false
+preprocessing_num_workers: 8
+deepspeed: ./LLaMA-Factory/examples/deepspeed/ds_z2_config.json
+
+### output
+output_dir: output/qwen2-7b-instruct/lora/sft
+logging_steps: 5
+save_steps: 300
+plot_loss: true
+overwrite_output_dir: true
+
+### train
+per_device_train_batch_size: 8
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-5
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+
+### eval
+val_size: 0.1
+per_device_eval_batch_size: 4
+eval_strategy: steps
+eval_steps: 100

@@ -1,5 +1,6 @@
 # Change Log
 
+-   2024年08月20日15:38:14 Save ckpt to `ticoAg/llm-complex-reasoning` - `qwen2-7b-instruct-traininfer-instruct0625`
 -   2024年08月08日22:46:26 从round1_train_data.jsonl构造推理数据集,筛选出答案和label一致的数据 -> `ticoAg/llm-complex-reasoning-train-qwen2-72b-instruct-correct`
 -   2024 年 08 月 03 日 00:31:33 预测流程代码优化
 -   2024 年 08 月 01 日 12:58:47 初始化仓库 from dw task3 baseline2

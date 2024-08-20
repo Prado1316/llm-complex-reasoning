@@ -6,6 +6,7 @@
 @Contact :   1627635056@qq.com
 """
 
+import datetime
 import re
 from ast import Dict
 from collections import defaultdict
@@ -34,6 +35,22 @@ def _extract_raw_data():
             for _id, question in enumerate(item["questions"]):
                 if question.get(_model_id):
                     _cache_data[item["id"]]["questions"][_id] = question
+    submit_data = [
+        {
+            "id": item["id"],
+            "questions": [
+                {"answer": _item.get("answer", "A")} for _item in item["questions"]
+            ],
+        }
+        for item in _cache_data.values()
+    ]
+
+    submit_filename = "submit_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    submit_file_path = Path("submit", f"{submit_filename}.jsonl")
+    if not submit_file_path.exists():
+        submit_file_path.parent.mkdir(parents=True, exist_ok=True)
+    jsonlines.open(submit_file_path, "w").write_all(submit_data)
+    exit()
     return _filter_test_data(_cache_data)
 
 
@@ -77,8 +94,10 @@ def _classify_ds(data):
 
 
 if __name__ == "__main__":
-    _model_id = "_Qwen2-72B-Instruct-test"
-    cache_path = Path(".cache", "req_cache.jsonl")
+    # _model_id = "_Qwen2-72B-Instruct-test"
+    _model_id = "_Qwen2-7B-Instruct-lora"
+    # cache_path = Path(".cache", "req_cache.jsonl")
+    cache_path = Path(".cache", "req_cache_Qwen2-7B-Instruct-lora_test.jsonl")
     data = _extract_raw_data()
     _ds, _ds_n = _classify_ds(data)
     jsonlines.open(Path(".cache", "train.jsonl"), "w").write_all(_ds)

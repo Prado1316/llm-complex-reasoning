@@ -7,6 +7,7 @@
 """
 
 import argparse
+import datetime
 import json
 import os
 import random
@@ -99,6 +100,7 @@ def prepare_gen_kwargs(problem, question, options) -> Dict:
     return {
         "model": args.model,
         "messages": messages,
+        "max_tokens": 2048,
         # "repetition_penalty": 1.05,
         "temperature": 0.7,
         "top_p": 0.8,
@@ -122,13 +124,16 @@ def _extract_votes_answer(input_texts: List[str]) -> str:
         problems = ans_pattern.findall(text)
         if not problems or problems[0] not in ["A", "B", "C", "D", "E"]:
             # compatible match pattern
-            ans = re.findall(r'[a-zA-Z]', text)
+            ans = re.findall(r"[a-zA-Z]", text)
             if ans:
                 ans = ans[-1].upper()
+                choices.append(ans)
                 true_choices.append(ans)
             else:
                 choices.append(random.choice(["A", "B", "C", "D"]))
-                logger.warning(f"No answer can be extracted, length: {len(text)}, {text[-20: ]}")
+                logger.warning(
+                    f"No answer can be extracted, length: {len(text)}, {text[-20: ]}"
+                )
                 true_choices.append("None")
         else:
             choices.append(problems[0])
@@ -137,7 +142,7 @@ def _extract_votes_answer(input_texts: List[str]) -> str:
     return ans, true_choices
 
 
-def send_a_group_req(gen_kwargs, members: int = 5) -> List[str]:
+def send_a_group_req(gen_kwargs, members: int = 3) -> List[str]:
     resps = [api_retry(**gen_kwargs) for _ in range(members)]
     return resps
 
@@ -341,16 +346,11 @@ def parse_args():
     args = parser.parse_args()
     os.environ["OPENAI_BASE_URL"] = args.base_url
     os.environ["OPENAI_API_KEY"] = args.api_key
-    if not isinstance(args.output_path, Path):
-        args.output_path = Path(args.output_path)
-    if not args.output_path.parent.exists():
-        args.output_path.parent.mkdir(parents=True)
-    curr_time = time.strftime("%Y%m%d_%H%M%S", time.localtime())
 
-    model_str_path = args.model.replace("/", "_")
-    args.output_path = args.output_path.parent.joinpath(
-        f"{args.task}_{args.output_path.stem}_{model_str_path}_{curr_time}{args.output_path.suffix}"
-    )
+    submit_filename = "submit_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    args.output_path = Path("submit", f"{submit_filename}.jsonl")
+    if not args.output_path.exists():
+        args.output_path.parent.mkdir(parents=True, exist_ok=True)
     logger.info(f"Output path redirected to: {args.output_path.as_posix()}")
     if not isinstance(args.data_path, Path):
         args.data_path = Path(args.data_path)
